@@ -13,21 +13,23 @@ See [my blog posts](https://smallhacks.wordpress.com/2020/09/26/esp32-based-old-
  - [Arduino Timezone Library](https://github.com/JChristensen/Timezone)
  - [Arduino Time Library ](https://playground.arduino.cc/Code/Time)
  - [ThingPulse OLED SSD1306 Library](https://github.com/ThingPulse/esp8266-oled-ssd1306)
+ - [Heltec ESP32+LoRa Series Quick Start](https://heltec-automation-docs.readthedocs.io/en/latest/esp32/quick_start.html)
+
  
 ### Hardware
  
- - [ESP-WROOM-32 0.96" OLED ESP32 WIFI-BT Dual-mode 2.4GHz For Wemos D1 AP STA](https://www.ebay.com/itm/ESP-WROOM-32-0-96-OLED-ESP32-WIFI-BT-Dual-mode-2-4GHz-For-Wemos-D1-AP-STA-/332196121504)
+ - [Heltec ESP32 Lora w/OLED](https://www.amazon.com/dp/B07428W8H3)
  - [L298N motor driver module H-Bridge](https://www.instructables.com/id/Control-DC-and-stepper-motors-with-L298N-Dual-Moto/). 
  - 12V 1A power supply
  
 ## How it works
 
-- L298N driver is used to generate 12V impulses to drive the clock and to provide 5V power
-  to the ESP board. It also allows to invert output polarity, so no relays needed. 
-- After startup ESP trying to connect to WIFI and get time from the NTP
+- L298N driver is used to generate 24V impulses to drive the clock and to provide 5V power
+  to the ESP board. This fork does not provide for inverted polarity on alternating pulses, as my IBM slave clock does not work that way.
+- After startup ESP connects to WIFI and get time from NTP.
 - If time is synced - ESP compares it with slave time in the Non-Volatile memory and updates the slave clock
 - Slave status is stored in Non-Volatile memory every minute, using [Preferences](https://github.com/espressif/arduino-esp32/tree/master/libraries/Preferences) library on the [NVS partition](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-reference/storage/nvs_flash.html) to optimize wear-out. Probably using the I2C FRAM module for that would be a better choice.
-- Code respects configured timezone and automatically synced to NTP every 5m
+- Code respects configured timezone and automatically syncs to NTP every 5m
 - There is a special "init mode" to sync hardware slave with the controller
 - At the moment we are using only one (first) channel of the L298N. The second could be used for the alarm or led backlight. 
 
