@@ -20,34 +20,32 @@
    SOFTWARE.
 */
 
+
+#include "heltec.h"
 #include <Preferences.h>
 #include <WiFi.h>
 #include <WiFiUdp.h>
 #include <Timezone.h>    // https://github.com/JChristensen/Timezone
 #include <TimeLib.h>     // https://playground.arduino.cc/Code/Time
-#include "SSD1306Wire.h" // SSD1306 OLED: https://github.com/ThingPulse/esp8266-oled-ssd1306
 #include "images.h"      // Include custom images
-
-// WIFI configuration
-#define WIFI_SSID "myssid"
-#define WIFI_KEY  "mypass"
+#include "credentials.h" // Wifi
 
 // NTP server name or IP, sync interval in seconds
-static const char ntpServerName[] = "cz.pool.ntp.org";
+static const char ntpServerName[] = "us.pool.ntp.org";
 #define NTP_SYNC_INTERVAL 300
 
 // Screensaver to save OLED
 #define SCREENSAVER_TIMER 600
 
 // Time Zone (DST) settings, change to your country
-TimeChangeRule CEST = { "CEST", Last, Sun, Mar, 2, 120 }; // Central European Summer Time
-TimeChangeRule CET =  { "CET ", Last, Sun, Oct, 3, 60  }; // Central European Standard Time
-Timezone ClockTZ(CEST, CET);
+TimeChangeRule usPST = { "PST", Second, Sun, Mar, 2, -420 }; // US Pacific Time
+TimeChangeRule usPDT =  { "PDT ", First, Sun, Nov, 2, -480  }; // US Pacific Time
+Timezone ClockTZ(usPST, usPDT);
 
 // motor controller CH0 pins
 #define PIN_CH00 12
 #define PIN_CH01 13
-// button, using toch mode
+// button, using touch mode
 #define PIN_INIT 15
 #define TOUCH_THRESHOLD 5
 
@@ -68,11 +66,8 @@ static const char hname[] = "esp-clock-controller";
 
     IMPULSE_WAIT is used in the INIT mode and if slave catching up master
 */
-#define IMPULSE_ON 150
-#define IMPULSE_WAIT 850
-
-// Initialize the OLED display using Wire library
-SSD1306Wire display(DISP_I2C, DISP_SDA, DISP_SCL);
+#define IMPULSE_ON 200
+#define IMPULSE_WAIT 800
 
 short state = 0;
 int8_t show_impulse = 0;
@@ -99,9 +94,15 @@ void setup() {
      in the clock and also we need to keep last used polarity as a sign
      This mean that valid values are from -721 to +721 excluding 0
   */
+  Heltec.begin(true /*DisplayEnable Enable*/, false /*LoRa Disable*/, true /*Serial Enable*/);
+  Serial.begin(115200);
+  Serial.println();
+  Serial.println("*.*.*.*.*.*.*.*.*.*.*.*.*.*.*.*.*.*");
+  Serial.println("Serial Begin OK");
   preferences.begin("clock", false);
   state = preferences.getShort("state", -1);
-  log_i("Booting... Initial state is: %d", state);
+  Serial.print("Booting... Initial state is: ");
+  Serial.println(state);
   if (state < -721 || state > 721 || state == 0) {
     state = 1; // init clock on 12:00
     preferences.putShort("state", state);
@@ -110,38 +111,30 @@ void setup() {
   pinMode(PIN_CH00, OUTPUT); // init GPIO to control clock motor
   pinMode(PIN_CH01, OUTPUT);
 
-  display.init();
-  display.flipScreenVertically();
+  Heltec.display->flipScreenVertically();
+  Heltec.display->setFont(ArialMT_Plain_10);
 
   int initState = touchRead(PIN_INIT);
-  
+
 
   // if init mode is on - state is set to 12:00 and pin must be unplugged when
   // slave is displaying this value
   if (initState <= TOUCH_THRESHOLD) {
-    log_i("Clock init mode started");
-    display.clear();
-    display.setFont(ArialMT_Plain_16);
-    display.drawStringMaxWidth(0, 0, 128,
+    Serial.println("Clock init mode started");
+    Heltec.display->clear();
+    Heltec.display->setFont(ArialMT_Plain_16);
+    Heltec.display->drawStringMaxWidth(0, 5, 128,
                                "Init mode");
-    display.setFont(ArialMT_Plain_10);
+    Heltec.display->setFont(ArialMT_Plain_10);
 
-    display.drawStringMaxWidth(0, 18, 128,
+    Heltec.display->drawStringMaxWidth(0, 18, 128,
                                "Set clock to 12:00 and unplug when ready");
-    display.display();
+    Heltec.display->display();
     state = 1;
     while (initState > TOUCH_THRESHOLD) {
-      if (state > 0) { // move clock arrow once a second, save last polarity
-        state = 1;
-        digitalWrite(PIN_CH00, HIGH);
-        digitalWrite(PIN_CH01, LOW);
-      } else {
-        state = -1;
-        digitalWrite(PIN_CH00, LOW);
-        digitalWrite(PIN_CH01, HIGH);
-      }
-      // invert polarity on next run
-      state = state * -1;
+      // move minute hand once per second
+      digitalWrite(PIN_CH00, HIGH);
+      digitalWrite(PIN_CH01, LOW);
       delay(IMPULSE_ON);
       digitalWrite(PIN_CH00, LOW);
       digitalWrite(PIN_CH01, LOW);
@@ -149,7 +142,7 @@ void setup() {
       preferences.putShort("state", state);
       initState = touchRead(PIN_INIT);
     }
-    display.clear();
+    Heltec.display->clear();
   }
   // workaround for the ESP32 SDK bug, see 
   // https://github.com/espressif/arduino-esp32/issues/2537#issuecomment-508558849
@@ -159,30 +152,32 @@ void setup() {
   // connect to wifi
   sprintf(console_text, "Connecting to wifi (%s)", WIFI_SSID);
   WiFi.begin(WIFI_SSID, WIFI_KEY);
-  display.clear();
-  display.setFont(ArialMT_Plain_10);
-  display.drawStringMaxWidth(0, 0, 128,
+  Heltec.display->clear();
+  Heltec.display->setFont(ArialMT_Plain_10);
+  Heltec.display->drawStringMaxWidth(0, 0, 128,
                              console_text);
-  display.display();
+ Heltec.display->display();
   while (WiFi.status() != WL_CONNECTED) {
     delay(10);
   }
-  log_i("Connected, IP address: %s", WiFi.localIP().toString().c_str());
+  Serial.print("Connected, IP address: ");
+  Serial.println(WiFi.localIP().toString().c_str());
 
-  log_i("Starting UDP...");
+  Serial.println("Starting UDP...");
   udp.begin(localPort);
-  log_i("Waiting for sync");
-  display.drawStringMaxWidth(0, 10, 128,
+  Serial.println("Waiting for sync");
+  Heltec.display->drawStringMaxWidth(0, 10, 128,
                              "Waiting for NTP sync");
-  display.display();
+  Heltec.display->display();
   setSyncProvider(getNtpTime);
   setSyncInterval(NTP_SYNC_INTERVAL); // sync with NTP
   while (timeStatus() == timeNotSet) {
     delay(10);
   }
   oled_activate = now();
-  touchAttachInterrupt(PIN_INIT, buttonCallback, TOUCH_THRESHOLD);
-  display.clear();
+  // below junk is commented out. it was causing panics.
+  //touchAttachInterrupt(PIN_INIT, buttonCallback, TOUCH_THRESHOLD);
+  Heltec.display->clear();
 }
 
 void buttonCallback() {
@@ -192,36 +187,37 @@ void buttonCallback() {
     oled_activate = now();
   }
 }
-/*-------- Move arrow and update state ----------*/
+/*-------- Move minute hand and update state ----------*/
 
 void fixState(short curr_state) {
   char buf[16], buf2[16];
-  log_i("changing state from %d [%s] to %d [%s])", state, formatState(abs(state), buf, 16), curr_state, formatState(curr_state, buf2, 16));
+  Serial.print("Changing state from: ");
+  Serial.print(state);
+  Serial.print(" -> ");
+  Serial.print(formatState(abs(state), buf, 16));
+  Serial.print(" to ");
+  Serial.print(curr_state);
+  Serial.print(" -> ");
+  Serial.println(formatState(curr_state, buf2, 16));
+  
   // this should never happens. If clock is behind NTP to up to 5m - do nothing, just wait
   if (abs(state) > curr_state && (abs(state) - curr_state) <= 5) {
-    log_i("Clock is behind NTP for %d minutes, ignoring", (int)(abs(state) - curr_state));
+    Serial.print("Clock is behind NTP for ");
+    Serial.print((int)(abs(state) - curr_state));
+    Serial.println(" minutes. Ignoring");
     return;
   }
-  if (state > 0) {
-    state++;
-    if (state >= 721) state = 1;
-    show_impulse = 1;
-    digitalWrite(PIN_CH00, HIGH);
-    digitalWrite(PIN_CH01, LOW);
-  } else {
-    state--;
-    if (state <= -721) state = -1;
-    show_impulse = -1;
-    digitalWrite(PIN_CH00, LOW);
-    digitalWrite(PIN_CH01, HIGH);
-  }
+  state++;
+  if (state >= 721) state = 1;
+  show_impulse = 1;
+  digitalWrite(PIN_CH00, HIGH);
+  digitalWrite(PIN_CH01, LOW);
   updateScreen();
   // invert polarity on the next run
-  state = state * -1;
   delay(IMPULSE_ON);
   digitalWrite(PIN_CH00, LOW);
   digitalWrite(PIN_CH01, LOW);
-  show_impulse = 0;
+  show_impulse = 1;
   updateScreen();
   preferences.putShort("state", state);
 }
@@ -235,21 +231,21 @@ char * formatState(int mystate, char * buf, int bufsize) {
 
 void updateScreen() {
   char buf[16];
-  display.clear();
+  Heltec.display->clear();
   time_t utc = now();
 
   // screensaver activated
   if(utc - oled_activate > SCREENSAVER_TIMER) {
     // draw random pixel
-    display.setPixel(random(display.getWidth()),random(display.getHeight()));
+    Heltec.display->setPixel(random(Heltec.display->getWidth()),random(Heltec.display->getHeight()));
     delay(25);
-    display.setBrightness(100);
-    display.display();
+    Heltec.display->setBrightness(100);
+    Heltec.display->display();
     return;
   }
-  display.setBrightness(255);
+  Heltec.display->setBrightness(255);
 
-  display.setFont(ArialMT_Plain_10);
+  Heltec.display->setFont(ArialMT_Plain_10);
   String wifi;
   if (WiFi.status() != WL_CONNECTED) {
     wifi = "wifi: n/a";
@@ -257,38 +253,38 @@ void updateScreen() {
   } else {
     wifi = "wifi: " + WiFi.SSID();
   }
-  display.drawString(0, 0, wifi);
+  Heltec.display->drawString(0, 0, wifi);
 
   time_t local_t = ClockTZ.toLocal(utc);
   // show NTP time
   String timenow = String(hour(local_t)) + ":" + twoDigits(minute(local_t)) + ":" + twoDigits(second(local_t));
-  display.setFont(ArialMT_Plain_16);
-  display.drawString(2, 25, timenow);
-  display.drawLine(75, 0, 75, display.getHeight());
+  Heltec.display->setFont(ArialMT_Plain_16);
+  Heltec.display->drawString(2, 20, timenow);
+  Heltec.display->drawLine(75, 0, 75, Heltec.display->getHeight());
   char * statenow = formatState(abs(state), buf, 16);
   // show state of the slave clock
-  display.drawString(85, 25, statenow);
+  Heltec.display->drawString(85, 20, statenow);
   // show DST if active
   if (ClockTZ.locIsDST(local_t)) {
     String dst = "DST";
-    display.setFont(ArialMT_Plain_10);
-    display.drawString(2, 50, dst);
+    Heltec.display->setFont(ArialMT_Plain_10);
+    Heltec.display->drawString(2, 50, dst);
   }
   // show NTP status text if we had any reply in the sync interval*1.5
   if (utc - last_ntp_sync < NTP_SYNC_INTERVAL * 1.5) {
     String ntp = "NTP";
-    display.setFont(ArialMT_Plain_10);
-    display.drawString(30, 50, ntp);
+    Heltec.display->setFont(ArialMT_Plain_10);
+    Heltec.display->drawString(30, 50, ntp);
   } else { // turn on screen of NTP is missing
     oled_activate = now();
   }
 
   if (show_impulse) {
-    if (show_impulse > 0) display.drawXbm(90, 50, 16, 8, polarity_a);
-    if (show_impulse < 0) display.drawXbm(90, 50, 16, 8, polarity_b);
+    if (show_impulse > 0) Heltec.display->drawXbm(90, 50, 16, 8, polarity_a);
+    if (show_impulse < 0) Heltec.display->drawXbm(90, 50, 16, 8, polarity_b);
   }
 
-  display.display();
+  Heltec.display->display();
 }
 
 /*-------- Main loop ----------*/
@@ -319,16 +315,18 @@ time_t getNtpTime() {
   IPAddress ntpServerIP; // NTP server's ip address
 
   while (udp.parsePacket() > 0); // discard any previously received packets
-  log_i("Transmit NTP Request");
+  Serial.println("Transmit NTP Request");
   // get a random server from the pool
   WiFi.hostByName(ntpServerName, ntpServerIP);
-  log_i("%s:%s", ntpServerName, ntpServerIP.toString().c_str());
+  Serial.print(ntpServerName);
+  Serial.print(" / ");
+  Serial.println(ntpServerIP.toString().c_str());
   sendNTPpacket(ntpServerIP);
   uint32_t beginWait = millis();
   while (millis() - beginWait < 1500) {
     int size = udp.parsePacket();
     if (size >= NTP_PACKET_SIZE) {
-      log_i("Receive NTP Response");
+      Serial.println("Receive NTP Response");
       udp.read(packetBuffer, NTP_PACKET_SIZE); // read packet into the buffer
       unsigned long secsSince1900;
       // convert four bytes starting at location 40 to a long integer
@@ -340,7 +338,7 @@ time_t getNtpTime() {
       return secsSince1900 - 2208988800UL;
     }
   }
-  log_i("No NTP Response :-(");
+  Serial.println("No NTP Response :-(");
   return 0; // return 0 if unable to get the time
 }
 
@@ -360,7 +358,7 @@ void sendNTPpacket(IPAddress & address) {
   packetBuffer[14] = 49;
   packetBuffer[15] = 52;
   // all NTP fields have been given values, now
-  // you can send a packet requesting a timestamp:
+  // you can send a packet requesting the time:
   udp.beginPacket(address, 123); //NTP requests are to port 123
   udp.write(packetBuffer, NTP_PACKET_SIZE);
   udp.endPacket();
