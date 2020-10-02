@@ -37,9 +37,9 @@ See [my blog posts](https://smallhacks.wordpress.com/2020/09/26/esp32-based-old-
 
 As ESP has no information about the slave clock position - we need to sync them. To do this - connect PIN_INIT (15) pin to GND and restart ESP. It will move arrows every second. Wait until the clock shows **12:00** and immediately unplug the wire. The clock will be synced with ESP and will switch to normal mode. 
 
-## Final result (not yet in a box)
+## The Clock
 
-![Clock and controller](clock.jpg "Clock and controller")
+![Clock](clock.jpg "Clock")
 
 ## Related links
 - Another slave clock project, based on ESP8266: software ([gitlab.com/close2/nebenuhr](https://gitlab.com/close2/nebenuhr)) and hardware ([gitlab.com/close2/nebenuhr_hardware/](https://gitlab.com/close2/nebenuhr_hardware))

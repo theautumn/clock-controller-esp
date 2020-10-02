@@ -166,7 +166,7 @@ void setup() {
   Serial.println("Starting UDP...");
   udp.begin(localPort);
   Serial.println("Waiting for sync");
-  Heltec.display->drawStringMaxWidth(0, 10, 128,
+  Heltec.display->drawStringMaxWidth(0, 24, 128,
                              "Waiting for NTP sync");
   Heltec.display->display();
   setSyncProvider(getNtpTime);
@@ -213,11 +213,10 @@ void fixState(short curr_state) {
   digitalWrite(PIN_CH00, HIGH);
   digitalWrite(PIN_CH01, LOW);
   updateScreen();
-  // invert polarity on the next run
   delay(IMPULSE_ON);
   digitalWrite(PIN_CH00, LOW);
   digitalWrite(PIN_CH01, LOW);
-  show_impulse = 1;
+  show_impulse = 0;
   updateScreen();
   preferences.putShort("state", state);
 }
@@ -280,8 +279,8 @@ void updateScreen() {
   }
 
   if (show_impulse) {
-    if (show_impulse > 0) Heltec.display->drawXbm(90, 50, 16, 8, polarity_a);
-    if (show_impulse < 0) Heltec.display->drawXbm(90, 50, 16, 8, polarity_b);
+    if (show_impulse < 0) Heltec.display->drawXbm(90, 50, 16, 8, polarity_a);
+    if (show_impulse > 0) Heltec.display->drawXbm(90, 50, 16, 8, polarity_b);
   }
 
   Heltec.display->display();
