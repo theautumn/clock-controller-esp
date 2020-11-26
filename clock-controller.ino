@@ -64,7 +64,7 @@ static const char hname[] = "esp-clock-controller";
 #define IMPULSE_ON 200
 #define IMPULSE_WAIT 800
 
-short state = 0;
+short clockState = 0;
 time_t last_ntp_sync = 0;
 
 char console_text[256];
@@ -88,31 +88,31 @@ void setup() {
   pinMode(PIN_CH01, OUTPUT);
   pinMode(PIN_INIT, INPUT_PULLUP); 	// clock reset to 12:00 button
   
-  preferences.begin("clock", false);
-  state = preferences.getShort("state", -1);
+  preferences.begin("clockState", false);
+  clockState = preferences.getShort("clockState", false);
   Serial.print("Booting... Initial state is: ");
-  Serial.println(state);
-  if (state < -721 || state > 721 || state == 0) {  // if state is silly
-    state = 1;                                      // init clock on 12:00
-    preferences.putShort("state", state);           // and store state
+  Serial.println(clockState);
+  if (clockState < -721 || clockState > 721 || clockState == 0) {  // if state is silly
+    clockState = 1;                                                // init clock on 12:00
+    preferences.putShort("clockState", clockState);                // and store state
   }
 
-  int initState = digitalRead(PIN_INIT);
+  int buttonState = digitalRead(PIN_INIT);
   Serial.print("***Init state: ");
-  Serial.println(initState);
+  Serial.println(buttonState);
   
 
-  // if init mode is on - state is set to 12:00 and pin must be unplugged when
-  // clock is displaying this value. State values are inverted because 
-  // INPUT_PULLUP
-  if (initState == 1) {
+  // if button is pressed while booting, state is set to 12:00 and 
+  // button must be released when clock is displaying this value. 
+  // State values are inverted because INPUT_PULLUP
+  if (buttonState == 1) {
     Serial.println("Init LOW. Skipping clock reset mode.");
   }
-  if (initState == 0) {
+  if (buttonState == 0) {
     Serial.println("Init HIGH. Going into clock reset mode.");
-    state = 1;
+    clockState = 1;
   }
-  while (initState == 0) {
+  while (buttonState == 0) {
     // move minute hand once per second
     digitalWrite(PIN_CH00, HIGH);
     digitalWrite(PIN_CH01, LOW);
@@ -122,8 +122,8 @@ void setup() {
     digitalWrite(PIN_CH01, LOW);
     delay(IMPULSE_WAIT);
     Serial.println("tock");
-    preferences.putShort("state", state);
-    initState = digitalRead(PIN_INIT);
+    preferences.putShort("clockState", clockState);
+    buttonState = digitalRead(PIN_INIT);
   }
   // workaround for the ESP32 SDK bug, see 
   // https://github.com/espressif/arduino-esp32/issues/2537#issuecomment-508558849
@@ -153,32 +153,30 @@ void setup() {
 
 /*-------- Move minute hand and update state ----------*/
 
-void advanceClock(short curr_state) {
+void updateState(short curr_state) {
+  // do some fucking shit
   char buf[16], buf2[16];
   Serial.print("Changing state from: ");
-  Serial.print(state);
+  Serial.print(clockState);
   Serial.print(" -> ");
-  Serial.print(formatState(abs(state), buf, 16));
+  Serial.print(formatState(abs(clockState), buf, 16));
   Serial.print(" to ");
   Serial.print(curr_state);
   Serial.print(" -> ");
   Serial.println(formatState(curr_state, buf2, 16));
   
   // this should never happens. If clock is behind NTP to up to 5m - do nothing, just wait
-  if (abs(state) > curr_state && (abs(state) - curr_state) <= 5) {
+  if (abs(clockState) > curr_state && (abs(clockState) - curr_state) <= 5) {
     Serial.print("Clock is behind NTP for ");
-    Serial.print((int)(abs(state) - curr_state));
+    Serial.print((int)(abs(clockState) - curr_state));
     Serial.println(" minutes. Ignoring");
     return;
   }
-  state++;
-  if (state >= 721) state = 1;
-  digitalWrite(PIN_CH00, HIGH);
-  digitalWrite(PIN_CH01, LOW);
-  delay(IMPULSE_ON);
-  digitalWrite(PIN_CH00, LOW);
-  digitalWrite(PIN_CH01, LOW);
-  preferences.putShort("state", state);
+  
+  clockState++;
+  if (clockState >= 721) clockState = 1;
+  preferences.putShort("clockState", clockState);
+
 }
 
 // convert state variable to the human-readable format
@@ -188,27 +186,23 @@ char * formatState(int mystate, char * buf, int bufsize) {
   return buf;
 }
 
+void advanceClock() {
+ 
+  digitalWrite(PIN_CH00, HIGH);
+  digitalWrite(PIN_CH01, LOW);
+  Serial.println("Tick");
+  delay(IMPULSE_ON);
+  digitalWrite(PIN_CH00, LOW);
+  digitalWrite(PIN_CH01, LOW);
+  Serial.println("Tock");
+  
+}
 
 /*-------- Main loop ----------*/
 void loop() {
 
   int buttonState = digitalRead(PIN_INIT);
 
-    if ((millis() - lastDebounceTime) > debounceDelay) {
-      // pressing the button will advance us one minute
-      // good for if the clock misses a tick (mine is very old!)
-      if ((buttonState == 0) && (PIN_CH00 == LOW)) {
-        digitalWrite(PIN_CH00, HIGH);
-        digitalWrite(PIN_CH01, LOW);
-        lastDebounceTime = millis(); //set the current time
-        Serial.println("Advanced one minute by operation of key.");
-      }
-      else if ((buttonState == 1) && (PIN_CH00 == HIGH)) {
-        digitalWrite(PIN_CH00, LOW);
-        digitalWrite(PIN_CH01, LOW);
-        lastDebounceTime = millis();
-      }
-    }
   
   time_t utc = now();
   time_t local_t = ClockTZ.toLocal(utc);
@@ -217,21 +211,37 @@ void loop() {
   // current 12h time in minutes, starting from 1
   short curr_state = hour_12 * 60 + minute(local_t) + 1;
 
-  if (curr_state != abs(state)) {
-    advanceClock(curr_state);
+  if (curr_state != abs(clockState)) {
+    updateState(curr_state);
+    advanceClock();
     delay(IMPULSE_WAIT); // cool down device :)
+
+  }
+
+  if (buttonState == 0) {
+    // do some button things
+    Serial.println("Button pressed. Advancing clock one minute.");
+    advanceClock();
+    
+    // this is a problem, because it makes the button feel like its stuttering
+    // the wait is reasonable if we're doing the initial incremental tick, but 
+    // its not reasonable for reading buttons. next version will have another button that just
+    // closes the relay circuit instead of going thru the microcontroller. 
+    delay(IMPULSE_WAIT);
+
   }
 }
 
+
 /*-------- NTP code ----------*/
 
-const int NTP_PACKET_SIZE = 48; // NTP time is in the first 48 bytes of message
+const int NTP_PACKET_SIZE = 48;     // NTP time is in the first 48 bytes of message
 byte packetBuffer[NTP_PACKET_SIZE]; //buffer to hold incoming & outgoing packets
 
 time_t getNtpTime() {
   IPAddress ntpServerIP; // NTP server's ip address
 
-  while (udp.parsePacket() > 0); // discard any previously received packets
+  while (udp.parsePacket() > 0);  // discard any previously received packets
   Serial.println("Transmit NTP Request");
   // get a random server from the pool
   WiFi.hostByName(ntpServerName, ntpServerIP);
